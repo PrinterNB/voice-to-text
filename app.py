@@ -250,6 +250,12 @@ def hotkey_loop():
                     lambda: key_down(key), device=mic_device(),
                     on_start=lambda: set_status("recording"),
                     on_chunk=live_on_chunk if live else None,
+                    # live: deliver audio in 0.25 s pieces, not 0.5 - audio
+                    # ARRIVING and a live hypothesis being handed back are both
+                    # bounded by this granularity, so halving it cuts real
+                    # delay from the live path (non-live keeps 0.5: fewer
+                    # callback iterations, nothing reads them live)
+                    stream_chunk=0.25 if live else None,
                     idle_wait=2.0,  # short so the loop re-reads CFG: a trigger key
                     # changed on the settings page applies within a few seconds
                 )

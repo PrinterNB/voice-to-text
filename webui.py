@@ -606,7 +606,7 @@ selectField(f, 'Live typing (type while you speak):', 'live_mode', D.live_mode, 
 var liveHelp = document.createElement('div'); liveHelp.className = 'note';
 liveHelp.textContent = ('Works with every engine, but real-time pacing is only as good as the model: OpenAI Whisper '
   + '(any size) stays close to your speech; NVIDIA Canary / Parakeet / Custom models trail more. It always '
-  + 're-listens only the last ~12 seconds of audio, so long dictations keep typing instead of stalling after the '
+  + 're-listens only the last ~6 seconds of audio, so long dictations keep typing instead of stalling after the '
   + 'first sentence, and anything not typed yet completes the moment you release. Needs output mode "type into '
   + 'focused window" - with clipboard output this setting has no effect. '
   + 'Transcription runs on its own thread, so model time never delays your speech: words commit within '

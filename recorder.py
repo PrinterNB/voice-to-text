@@ -339,7 +339,7 @@ def record_fixed(seconds, samplerate=SAMPLERATE, device=None):
 
 
 def record_key_held(is_key_held, timeout=600, device=None, on_start=None, idle_wait=5.0,
-                    release_grace=0.5, on_chunk=None):
+                    release_grace=0.5, on_chunk=None, stream_chunk=None):
     """Capture continuously; keep audio only while `is_key_held()` is true.
 
     Capture runs ahead of the press, so listening begins the moment the key
@@ -349,10 +349,15 @@ def record_key_held(is_key_held, timeout=600, device=None, on_start=None, idle_w
     trigger key changed on the settings page applies within idle_wait). `on_start`
     is called once when the key first registers; `on_chunk(float32 chunk)` gets
     every kept chunk as it is captured (held audio plus the grace tail) - live
-    typing uses it. Returns (audio, duration_seconds, key_was_held)."""
+    typing uses it. `stream_chunk` sets the dshow read/delivery granularity
+    (default 0.5 s): live callers pass a smaller value so audio ARRIVES - and
+    a live hypothesis is delivered - sooner, which is part of the live-typing
+    delay; key release is also caught at this granularity. Returns (audio,
+    duration_seconds, key_was_held)."""
     mode, val = _resolve(device)
     if mode == "dshow":
-        return _dshow_key_held(val, is_key_held, timeout, on_start=on_start,
+        return _dshow_key_held(val, is_key_held, timeout,
+                               chunk=stream_chunk or 0.5, on_start=on_start,
                                idle_wait=idle_wait, release_grace=release_grace,
                                on_chunk=on_chunk)
     return _sd_key_held(is_key_held, timeout, val, on_start, idle_wait,

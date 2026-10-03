@@ -108,17 +108,20 @@ class LiveSession:
     stop() just ends the worker (aborted cycles)."""
 
     SR = 16000
-    STEP = 0.5            # MINIMUM seconds of new audio between worker passes
-    WINDOW_MAX = 12.0     # SLIDING live window (WhisperLive-style): every
+    STEP = 0.25           # MINIMUM seconds of new audio between worker passes
+    WINDOW_MAX = 6.0      # SLIDING live window (WhisperLive-style): every
                           # pass only re-listens the last WINDOW_MAX seconds.
-                          # Two things this fixes: per-pass cost stays bounded
-                          # even for long dictations (so the worker keeps pace
-                          # with speech on engines like Parakeet), and the
-                          # model re-reads ONLY recent audio - long-form
-                          # decoders re-chunk a 40s window and rewrite their
-                          # own earlier text, which stalls whole-text
-                          # agreement forever (first sentence typed, then
-                          # silence until release: the old symptom)
+                          # Kept SHORT on purpose: a pass costs roughly what
+                          # the window costs, and the worker starts a new
+                          # pass as soon as its audio arrives - so this size
+                          # sets the pass INTERVAL and the wall between the
+                          # newest speech and its hypothesis (the live delay
+                          # floor). 6 s still re-listens many sentences of
+                          # context, enough for word-level alignment to
+                          # anchor anywhere, while halving per-pass cost vs
+                          # 12 s; long audio drifting out of re-reading also
+                          # stops long-form re-chunking ever stalling growth
+                          # (the first-then-silence symptom)
     SAFETY_WORDS = 1      # only the word in flight is held back
     PASS_SLACK = 0.8      # a model slower than STEP may start a pass on
                           # slightly LESS new audio: covering dt*0.8 < dt
@@ -213,8 +216,10 @@ class LiveSession:
         earlier text on longer windows, and that drift must not stall growth.
         Everything h has AFTER that run is text over recent audio = new, so
         it is appended (minus SAFETY_WORDS trailing words while live).
-        A pass whose end matches nothing typed is skipped (the flush has a
-        full-text startswith fallback). Append-only by construction:
+        A pass whose text overlaps NOTHING typed cannot be describing the
+        audio we already typed (passes only ever hear the newest window),
+        so it is a gap - a pause longer than the window - and its text is
+        newer: append it like any other pass. Append-only by construction:
         nothing typed live is ever retracted."""
         # align: longest word run at the END of what we typed that appears
         # (up to the drift tolerance below) ANYWHERE inside this hypothesis -
@@ -248,14 +253,17 @@ class LiveSession:
             if best_o is not None:
                 m_best, o_best, mism_best = m, best_o, best_mism
                 break
-        if final and not m_best and h.startswith(self.committed):
-            # full-text hypothesis (the window covered everything): plain tail
-            new = h[len(self.committed):]
-            self.committed = h
-            return new
         if self.committed and not m_best:
-            return ""  # cannot align this pass with what was typed at all
-        words = hw[o_best + m_best:]
+            # the typed tail is in NO part of this pass: the window has
+            # slid PAST that audio - a long pause inside one dictation
+            # (older than the window) - so everything this pass heard is
+            # newer text than anything typed: a gap, not a conflict.
+            # (This also subsumes the old full-text flush fallback: if h
+            # began with the typed text, its end WOULD appear in h, so a
+            # zero-match h never contains it.)
+            words = list(hw)
+        else:
+            words = hw[o_best + m_best:]
         if not final:
             if len(words) <= self.SAFETY_WORDS:
                 return ""
