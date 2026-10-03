@@ -1,6 +1,8 @@
 # Voice Dictation — hold-to-talk speech-to-text for Windows
 
-100% local speech-to-text. No cloud, no GPU — everything runs on your CPU and RAM.
+100% local speech-to-text. No cloud, no API calls — everything runs on your
+machine: CPU by default, CUDA GPU when one is available (see the GPU note below
+for making it actually engage on Windows).
 
 You mouse-click into a text field, hold a key while you talk, release it, and the
 transcription is typed into that window. Say a configured shortcut phrase like
@@ -21,7 +23,7 @@ transcription is typed into that window. Say a configured shortcut phrase like
 ## Setup
 
 Double-click **`install.bat`** — it creates the virtual environment, installs the
-core and optional (Canary/Parakeet) dependencies, and generates the tray icon.
+core and optional (Canary/Parakeet/Vosk) dependencies, and generates the tray icon.
 
 The recorder captures audio through **ffmpeg** (DirectShow) whenever PortAudio
 sees no usable input — this is what makes the "Microphone" dropdown show every
@@ -35,7 +37,7 @@ Or step by step:
 python -m venv .venv
 call .venv\Scripts\activate.bat
 pip install -r requirements.txt
-:: optional, only if you want the Canary/Parakeet engines:
+:: optional, only if you want the Canary/Parakeet/Vosk engines:
 pip install -r requirements-optional.txt
 ```
 
@@ -46,11 +48,16 @@ Double-click **`VoiceDictation.bat`** — the installer creates it next to
 tray. Copy `VoiceDictation.bat` to your Desktop, a folder, or a USB stick — it
 stores absolute paths, so a copy works from anywhere.
 
-- **Right-click the tray icon** → menu: Open settings / **Model manager** / Pause
-  listening / Resume listening / **Use GPU (CUDA)** / **Use CPU only** / Test
+- **Right-click the tray icon** → menu: Open settings / **Model manager** / **Load
+  model** / **Unload model** / **Use GPU (CUDA)** / **Use CPU only** / Test
   microphone / Quit. The GPU/CPU pair is a toggle: exactly one is marked checked,
   picking which device transcribes (GPU falls back to CPU when no CUDA GPU
-  exists); the choice persists in `config.json`. "Open settings" and
+  exists); the choice persists in `config.json`. **Load model** warms the
+  engine/model the settings page currently selects — its RAM/VRAM is claimed
+  right away instead of silently during the next dictation (it also downloads a
+  model that was never fetched). **Unload model** drops every loaded engine/model
+  and gives that memory back — handy after `large-v3`/Canary 1B or before
+  switching to a big model; the next use simply re-loads. "Open settings" and
   "Model manager" just open the relevant page in your browser and return
   immediately — the tray menu keeps working while the page is open, and closing
   the browser tab is all it takes to be done.
@@ -162,9 +169,10 @@ the tab — the page stays available for the whole time the app runs.
   re-tokenized positions long-form models drift into their own older text,
   and treating a pause longer than the window as a gap to append after),
   append-only by construction, so nothing typed live is ever retracted;
-  the word you are still saying is always held back (none of these models
-  has a native streaming API, so this re-listen-and-align is what makes it
-  safe).
+  the word you are still saying is always held back (the OFFLINE models have
+  no native streaming API, so this re-listen-and-align is what makes them
+  safe; the Vosk engine has one and takes its native streaming path instead,
+  where the partial word is what gets held back).
   Works with every engine; OpenAI Whisper (any size) stays roughly in sync
   with your speech, while **Canary / Parakeet / Custom models lag behind**
   and catch up the moment you release — two ways to fix that on this machine:
@@ -222,10 +230,13 @@ publishes**, flagged "NeMo checkpoint only - this app cannot load it": those shi
 `.nemo` checkpoints and are not selectable in the settings dropdown) plus anything else
 physically present in the HF cache, with installed/present status and size, and lets you
 **Download** (pre-fetch a model, needs internet once) or **Delete** it. Models already
-present are used offline.
+present are used offline. The two **Vosk** models are not on this page — they are
+Kaldi downloads managed by the engine choice itself (`~/.cache/vosk`, progress shown
+in the settings page's live status).
 
 Models are downloaded once from Hugging Face/CT2 on first use and cached
-(`~/.cache`). After that, inference is fully offline.
+(`~/.cache`; Vosk models from alphacephei.com into `~/.cache/vosk`). After that,
+inference is fully offline.
 
 ## Troubleshooting
 

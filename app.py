@@ -415,12 +415,27 @@ def on_quit(_icon, _item):
         ICON.stop()
 
 
-def on_pause(_icon, _item):
-    STATUS["paused"] = True
+def on_load_model(_icon, _item):
+    # warm the engine/model the settings page selected right now: the first
+    # dictation otherwise pays that load silently (big models: seconds of
+    # RAM/VRAM); this also prefetches a model that was never downloaded
+    try:
+        note("loading the configured model...")
+        asr.warm(CFG)
+        note("model loaded (stays in memory until Unload model)")
+    except Exception as e:
+        log_error(f"model load failed: {e}")
+        note("model load failed: " + str(e))
 
 
-def on_resume(_icon, _item):
-    STATUS["paused"] = False
+def on_unload_model(_icon, _item):
+    # drop every loaded engine/model from the cache: the last references go
+    # and the RAM/VRAM they held is returned (handy after large-v3/Canary 1B
+    # or when switching to a big model); the next use just re-loads it
+    asr._CACHE.clear()
+    import gc
+    gc.collect()
+    note("models unloaded (memory freed; the next use re-loads)")
 
 
 def on_gpu_on(_icon, _item):
@@ -450,8 +465,8 @@ def on_gpu_off(_icon, _item):
 MENU = Menu(
     MenuItem("Open settings", on_settings),
     MenuItem("Model manager", on_models),
-    MenuItem("Pause listening", on_pause, checked=lambda _icon: STATUS["paused"]),
-    MenuItem("Resume listening", on_resume, checked=lambda _icon: not STATUS["paused"]),
+    MenuItem("Load model", on_load_model),
+    MenuItem("Unload model", on_unload_model),
     MenuItem("Use GPU (CUDA)", on_gpu_on, checked=lambda _icon: bool(CFG.get("gpu", False))),
     MenuItem("Use CPU only", on_gpu_off, checked=lambda _icon: not CFG.get("gpu", False)),
     MenuItem("Test microphone", on_test),

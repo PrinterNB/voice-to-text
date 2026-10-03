@@ -27,6 +27,15 @@ def transcribe(audio, cfg):
     return _hf_transformers(audio, model_id, gpu)
 
 
+def warm(cfg):
+    """Tray "Load model": bring the configured engine/model into _CACHE with
+    a 0.1 s silence pass (constructs the model; an empty decode costs
+    nothing). Counterpart "Unload model" clears _CACHE and the references
+    drop, returning the RAM/VRAM. Downloads the model if it was never
+    fetched (the Model manager page is the explicit download path)."""
+    return transcribe(numpy.zeros(1600, dtype=numpy.float32), cfg)
+
+
 def _whisper(audio, size, language, gpu=False):
     key = ("fw", size, gpu)
     model = _CACHE.get(key)
