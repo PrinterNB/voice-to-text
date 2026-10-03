@@ -104,6 +104,13 @@ def note(detail):
     webui.LIVE_STATUS["detail"] = detail
 
 
+def _vosk_progress(done, total):
+    # the live status line doubles as download feedback - a 1.8 GB Kaldi
+    # model with no output at all read as "the download failed"
+    note("downloading Vosk model: %.0f%% (%.0f of %.0f MB)"
+         % (100.0 * done / max(total, 1), done / 1e6, total / 1e6))
+
+
 def _title():
     return (
         "Voice Dictation - hold "
@@ -224,6 +231,22 @@ def hotkey_loop():
             # live typing only makes sense when typing into the focused window
             live_on = bool(CFG.get("live_mode", False)) and CFG.get(
                 "output_mode", "autotype") != "clipboard"
+            # the Kaldi model must exist BEFORE any cycle uses it: downloading
+            # 40 MB..1.8 GB inside the first live pass looked like a hang and
+            # was reported as "could not download" - fetch once per cycle with
+            # progress into the settings page's live status (cached afterwards,
+            # so this is a no-op once the model is on disk); an interrupted
+            # attempt leaves a .part that the next attempt resumes
+            if CFG.get("engine") == "vosk":
+                try:
+                    asr._vosk_model(CFG.get("vosk_model")
+                                    or "vosk-model-small-en-us-0.15", _vosk_progress)
+                except Exception as e:
+                    log_error(f"vosk model unavailable: {e}")
+                    note("could not fetch the Vosk model: " + str(e)
+                         + " (a partial download stays resumable)")
+                    time.sleep(2)
+                    continue
             live = asr.LiveSession(CFG) if live_on else None
             # snapshot shortcuts for this dictation: the settings page shares
             # this very CFG dict, and an edit mid-hold must not retypes a

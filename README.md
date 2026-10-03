@@ -139,7 +139,8 @@ the tab — the page stays available for the whole time the app runs.
     comfortably on CPU. Models come from alphacephei.com (not Hugging
     Face): the app downloads the chosen model zip into `~/.cache/vosk` the
     first time you select it (`small` 40 MB, or `full` 1.8 GB with better
-    accuracy).
+    accuracy). The download shows progress in the settings page's live status,
+    and an interrupted attempt resumes (a `.part` file stays in the cache).
   - `Custom model` — shows a free-text field for any Hugging Face ASR model ID.
 - **Language** — auto-detect by default; pick explicitly for better accuracy
   (Whisper engine only — the Canary/Parakeet models auto-detect and always
@@ -168,10 +169,13 @@ the tab — the page stays available for the whole time the app runs.
   with your speech, while **Canary / Parakeet / Custom models lag behind**
   and catch up the moment you release — two ways to fix that on this machine:
   **run on the GPU** (with a CUDA torch build — see the note in
-  `requirements-optional.txt` — every engine passes in well under real time
-  and live typing stays about one word behind your speech), or choose the
-  **Vosk engine**, which is a genuine streaming recognizer: its live path
-  types word-by-word as you speak with no re-listen delay at all. Voice
+  `requirements-optional.txt`; it cuts pass time, but only modestly for the
+  TDT/Canary generation models: they decode words one-by-one and the audio
+  feature extraction stays on CPU, so a low GPU% while transcribing is the
+  expected steady state — larger Whisper sizes are the engines that gain
+  most from GPU), or choose the **Vosk engine**, which is a genuine
+  streaming recognizer: its live path types word-by-word as you speak with
+  no re-listen delay at all. Voice
   shortcuts ("say X → insert Y")
   are honored while typing live too. With clipboard output this setting has
   no effect. **Ctrl simply does not work with live typing, and is not offered
@@ -206,7 +210,11 @@ torch wheel is installed**: plain `pip` gives the CPU-only torch build (`x.y+cpu
 HF engines never engage the GPU though the settings say so. The fix is in
 `requirements-optional.txt`'s note: `pip install torch torchaudio
 --index-url https://download.pytorch.org/whl/cu128`. The faster-whisper/
-ctranslate2 wheels already speak CUDA.
+ctranslate2 wheels already speak CUDA. GPU gains are engine-dependent, though:
+TDT/Canary generation models spend most pass time in the token-by-token decode
+and in CPU-side feature extraction, so the GPU multiplier is small for
+Parakeet/Canary and low GPU utilization while transcribing is the expected
+steady state (the bursts are just tiny); larger Whisper sizes gain the most.
 
 A separate **Models** page lives at `http://127.0.0.1:47111/models.html`: it lists every
 model (Whisper sizes, Canary, Parakeet presets, **plus every other Canary model NVIDIA

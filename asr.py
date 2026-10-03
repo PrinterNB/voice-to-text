@@ -89,10 +89,15 @@ def _to16(audio):
                       -32768.0, 32767.0).astype(numpy.int16).tobytes()
 
 
-def _vosk_model(name):
+def _vosk_model(name, progress=None):
     """Vosk model dir + object: ~/.cache/vosk/<name>, the zip downloaded once
     from alphacephei.com - Kaldi models are NOT on Hugging Face, so this repo
-    keeps its own cache next to the HF one."""
+    keeps its own cache next to the HF one. The full model is 1.8 GB: urllib
+    downloading it invisibly inside one call looked like "nothing happens /
+    download failed", so this streams in 1 MB pieces with a progress callback
+    (bytes_done, total_bytes) and keeps a <name>.zip.part so an interrupted
+    attempt can resume when the server honors Range (1.8 GB took minutes and
+    the first tries died without any output at all)."""
     key = ("vosk", name)
     model = _CACHE.get(key)
     if model is not None:
@@ -106,8 +111,32 @@ def _vosk_model(name):
     if not os.path.isdir(model_dir):
         os.makedirs(base, exist_ok=True)
         zip_path = os.path.join(base, name + ".zip")
-        urllib.request.urlretrieve("https://alphacephei.com/vosk/models/%s.zip" % name,
-                                  zip_path)
+        if os.path.exists(zip_path):
+            os.remove(zip_path)  # leftover partial from an interrupted attempt
+        part = zip_path + ".part"
+        url = "https://alphacephei.com/vosk/models/%s.zip" % name
+        have = os.path.getsize(part) if os.path.exists(part) else 0
+        req = urllib.request.Request(url)
+        if have:
+            req.headers["Range"] = "bytes=%d-" % have
+        with urllib.request.urlopen(req, timeout=30) as r:
+            # a server that honored the Range answers with Content-Range
+            resumed = have > 0 and "content-range" in r.headers
+            if not resumed and have:
+                have = 0  # server did not honor the Range: restart the file
+            total = have + int(r.headers.get("Content-Length") or 0)
+            with open(part, "ab" if (have and resumed) else "wb") as f:
+                last = have
+                while True:
+                    buf = r.read(1 << 20)
+                    if not buf:
+                        break
+                    f.write(buf)
+                    have += len(buf)
+                    if progress and have - last >= 4 * 1024 * 1024:
+                        progress(have, total)
+                        last = have
+        os.replace(part, zip_path)
         with zipfile.ZipFile(zip_path) as zf:
             zf.extractall(base)
         os.remove(zip_path)
