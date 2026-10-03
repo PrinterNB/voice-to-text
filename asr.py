@@ -1,3 +1,4 @@
+import json
 import os
 import threading
 import time
@@ -17,6 +18,9 @@ def _threads():
 def transcribe(audio, cfg):
     """Transcribe float32 audio (16 kHz). Dispatches on cfg["engine"]."""
     gpu = bool(cfg.get("gpu", False))
+    if cfg.get("engine") == "vosk":
+        # online/streaming engine - see _vosk_* below
+        return _vosk(audio, cfg.get("vosk_model") or "vosk-model-small-en-us-0.15")
     if cfg.get("engine", "whisper") == "whisper":
         return _whisper(audio, cfg.get("whisper_model", "base"), cfg.get("language"), gpu)
     model_id = cfg.get("hf_model") or config_mod.DEFAULTS["hf_model"]
@@ -79,9 +83,66 @@ def _run_hf(pipe, audio):
     return (out["text"] if isinstance(out, dict) else out).strip()
 
 
+def _to16(audio):
+    """The pipeline is float32 in [-1, 1]; Kaldi/Vosk want int16 bytes."""
+    return numpy.clip(numpy.asarray(audio, dtype=numpy.float32) * 32768.0,
+                      -32768.0, 32767.0).astype(numpy.int16).tobytes()
+
+
+def _vosk_model(name):
+    """Vosk model dir + object: ~/.cache/vosk/<name>, the zip downloaded once
+    from alphacephei.com - Kaldi models are NOT on Hugging Face, so this repo
+    keeps its own cache next to the HF one."""
+    key = ("vosk", name)
+    model = _CACHE.get(key)
+    if model is not None:
+        return model
+    import urllib.request
+    import zipfile
+    import vosk
+
+    base = os.path.join(os.path.expanduser("~"), ".cache", "vosk")
+    model_dir = os.path.join(base, name)
+    if not os.path.isdir(model_dir):
+        os.makedirs(base, exist_ok=True)
+        zip_path = os.path.join(base, name + ".zip")
+        urllib.request.urlretrieve("https://alphacephei.com/vosk/models/%s.zip" % name,
+                                  zip_path)
+        with zipfile.ZipFile(zip_path) as zf:
+            zf.extractall(base)
+        os.remove(zip_path)
+    model = vosk.Model(model_dir)
+    _CACHE[key] = model
+    return model
+
+
+def _vosk(audio, model_name):
+    """Whole-audio transcription through Vosk. Kaldi finalizes whole
+    utterances: feed everything, SetEos, collect every utterance's text."""
+    import vosk
+
+    rec = vosk.KaldiRecognizer(_vosk_model(model_name), 16000.0)
+    out = []
+    for i in range(0, len(audio), 8000):  # 0.5 s frames; far faster than real time
+        # AcceptWaveform returning 1 = an utterance boundary was reached:
+        # Result() then hands back that utterance's finalized text.
+        if rec.AcceptWaveform(_to16(audio[i:i + 8000])):
+            text = json.loads(rec.Result()).get("text")
+            if text:
+                out.append(text)
+    text = json.loads(rec.Result()).get("text")  # flush the in-progress one
+    if text:
+        out.append(text)
+    text = " ".join(out).replace("[no-speech]", " ").replace("[unk]", " ")
+    return " ".join(text.split())
+
+
 class LiveSession:
-    """Progressive live typing for engines without a native streaming API (none
-    of the ones here have one). Transcription runs in a WORKER THREAD that
+    """Progressive live typing for engines WITHOUT a native streaming API
+    (the Vosk engine HAS one and takes the direct native path: AcceptWaveform
+    in, finalized text + partial typed as an append-only diff - no worker, no
+    re-listen). For the offline engines (Whisper/Canary/Parakeet/custom)
+    transcription runs in a WORKER THREAD that
     constantly re-transcribes the LATEST window as fast as the model can run
     it: feed() never blocks, so capture and the user's speech are never
     delayed by model time - the wall-time pass interval simply becomes the
@@ -138,14 +199,30 @@ class LiveSession:
         self.lock = threading.Lock()
         self.hyp = None    # latest unconsumed hypothesis from the worker
         self.stop_flag = threading.Event()
-        self.worker = threading.Thread(target=self._worker, name="live-asr",
-                                      daemon=True)  # never holds the process
-        # (a leaked session - e.g. recorder crashed before its stop - must
-        # not keep the app or a test alive; stop()/finish() join it normally)
-        self.worker.start()
+        # Vosk is the ONE engine here with a native streaming API
+        # (AcceptWaveform/GetResult): Kaldi hands back finalized utterance
+        # text plus a "partial" for the word in flight, so it needs none of
+        # the worker/re-listen/alignment machinery below - feed() speaks
+        # straight into the recognizer and text is typed as an append-only
+        # diff of the safe view (final + partial minus SAFETY_WORDS).
+        self.native = cfg.get("engine", "whisper") == "vosk"
+        if self.native:
+            self.worker = None
+            self.rec = None        # recognizer made on the first feed
+            self.v_final = ""      # finalized utterances (safe text)
+            self.v_partial = ""    # current utterance candidate words
+            self.typed_raw = ""    # what the native path emitted (prefix)
+        else:
+            self.worker = threading.Thread(target=self._worker, name="live-asr",
+                                          daemon=True)  # never holds the process
+            # (a leaked session - e.g. recorder crashed before its stop - must
+            # not keep the app or a test alive; stop()/finish() join it normally)
+            self.worker.start()
 
     def stop(self):
         # for cycles that never reach finish() (key never pressed etc.)
+        if self.worker is None:
+            return  # native Vosk path has no worker: feed() did the work
         self.stop_flag.set()
         try:
             self.worker.join(timeout=10)
@@ -155,6 +232,8 @@ class LiveSession:
     def feed(self, audio):
         if audio is None or len(audio) == 0:
             return ""
+        if self.native:
+            return self._feed_vosk(audio)
         with self.lock:
             self.chunks.append(numpy.asarray(audio, dtype=numpy.float32))
             self.total += len(audio)
@@ -166,10 +245,13 @@ class LiveSession:
 
     def finish(self):
         self.stop_flag.set()
-        try:
-            self.worker.join(timeout=10)  # let a pass in flight finish first
-        except Exception:
-            pass
+        if self.worker is not None:
+            try:
+                self.worker.join(timeout=10)  # let a pass in flight finish first
+            except Exception:
+                pass
+        if self.native:
+            return self._finish_vosk()
         window = self._window()
         if window.size == 0:
             return ""
@@ -273,6 +355,74 @@ class LiveSession:
         new = " ".join(words)
         out = ((" " if self.committed else "") + new)
         self.committed = (self.committed + " " + new).strip()
+        return out
+
+    def _vosk_rec(self):
+        if self.rec is None:
+            try:
+                import vosk
+
+                model = _vosk_model(self.cfg.get("vosk_model")
+                                   or "vosk-model-small-en-us-0.15")
+                self.rec = vosk.KaldiRecognizer(model, 16000.0)
+            except Exception as e:
+                self.last_error = str(e)
+                raise
+        return self.rec
+
+    def _feed_vosk(self, audio):
+        try:
+            rec = self._vosk_rec()
+            # 1 = utterance finished (Result: finalized text), 0 = still in
+            # progress (PartialResult: the candidate words in flight)
+            done = rec.AcceptWaveform(_to16(audio))
+            res = json.loads(rec.Result() if done else rec.PartialResult())
+        except Exception as e:
+            self.last_error = str(e)
+            return ""
+        if "text" in res:
+            self.v_final = (self.v_final + " " + res["text"]).strip()
+            self.v_partial = ""
+        else:
+            self.v_partial = res.get("partial") or ""
+        return self._emit_vosk(final=False)
+
+    def _finish_vosk(self):
+        try:
+            rec = self._vosk_rec()
+            res = json.loads(rec.Result())  # flushes the in-progress utterance
+            if res.get("text"):
+                self.v_final = (self.v_final + " " + res["text"]).strip()
+        except Exception as e:
+            self.last_error = str(e)
+        self.v_partial = ""
+        return self._emit_vosk(final=True)
+
+    def _emit_vosk(self, final):
+        """Append-only diff typing of the safe view = finalized utterances +
+        partial minus SAFETY_WORDS trailing words (the word in flight). When
+        an utterance finalizes, Kaldi may re-think a word of the partial
+        (rare): on such a rewrite only the part past the SHARED PREFIX is
+        typed, so what was typed live is never retracted."""
+        view = (self.v_final + " " + self.v_partial).strip()
+        if not final:
+            words = view.split()
+            if len(words) <= self.SAFETY_WORDS:
+                return ""
+            view = " ".join(words[:-self.SAFETY_WORDS])
+        if view.startswith(self.typed_raw):
+            n = len(self.typed_raw)
+        else:
+            n = 0
+            for a, b in zip(self.typed_raw, view):
+                if a != b:
+                    break
+                n += 1
+        delta = view[n:]
+        if not delta:
+            return ""
+        out = ((" " if self.typed_raw else "") + delta)
+        self.typed_raw = view
         return out
 
     def _window(self):

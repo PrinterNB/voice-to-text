@@ -10,7 +10,7 @@ transcription is typed into that window. Say a configured shortcut phrase like
 
 | Part | Implementation |
 | --- | --- |
-| Speech recognition | [faster-whisper](https://github.com/DeepInsider/faster-whisper) (OpenAI Whisper, CTranslate2, all CPU cores — plus NVIDIA Canary and NVIDIA Parakeet as alternative engines), with a CPU/GPU toggle in the tray menu |
+| Speech recognition | [faster-whisper](https://github.com/DeepInsider/faster-whisper) (OpenAI Whisper, CTranslate2, all CPU cores — plus NVIDIA Canary and NVIDIA Parakeet as alternative engines, and Vosk as a true-streaming one), with a CPU/GPU toggle in the tray menu — see the engines/GPU notes below |
 | Tray icon | `pystray` — the app lives in your system tray, no terminal window |
 | Screen-corner icon | while **listening** (recording) and while **transcribing**, a small icon appears in the top-right corner of your screens — red = recording, amber = transcribing — and disappears the rest of the time, so you can watch state even though Windows 11 hides tray icons |
 | Hold-to-talk | any F-key / Alt / Shift / letter / digit or a combination of them (no Ctrl, no Win — see the Trigger key entry), configurable in the settings UI — or click "Detect my key" and physically press the shortcut you want (default `F9`) |
@@ -132,6 +132,14 @@ the tab — the page stays available for the whole time the app runs.
     offered.
   - `NVIDIA Parakeet` — very accurate English ASR (TDT 0.6B v3 also covers
     25 languages); shows Parakeet presets. CPU-friendly.
+  - `Vosk` — the one **true streaming** engine: Kaldi-based online ASR emits
+    words **while you speak**, so with it live typing is genuine word-by-word
+    real-time, no re-listen re-confirmation delay. Costs: noticeably less
+    accurate than Whisper/Parakeet, English models, no punctuation. Runs
+    comfortably on CPU. Models come from alphacephei.com (not Hugging
+    Face): the app downloads the chosen model zip into `~/.cache/vosk` the
+    first time you select it (`small` 40 MB, or `full` 1.8 GB with better
+    accuracy).
   - `Custom model` — shows a free-text field for any Hugging Face ASR model ID.
 - **Language** — auto-detect by default; pick explicitly for better accuracy
   (Whisper engine only — the Canary/Parakeet models auto-detect and always
@@ -158,7 +166,13 @@ the tab — the page stays available for the whole time the app runs.
   safe).
   Works with every engine; OpenAI Whisper (any size) stays roughly in sync
   with your speech, while **Canary / Parakeet / Custom models lag behind**
-  and catch up the moment you release. Voice shortcuts ("say X → insert Y")
+  and catch up the moment you release — two ways to fix that on this machine:
+  **run on the GPU** (with a CUDA torch build — see the note in
+  `requirements-optional.txt` — every engine passes in well under real time
+  and live typing stays about one word behind your speech), or choose the
+  **Vosk engine**, which is a genuine streaming recognizer: its live path
+  types word-by-word as you speak with no re-listen delay at all. Voice
+  shortcuts ("say X → insert Y")
   are honored while typing live too. With clipboard output this setting has
   no effect. **Ctrl simply does not work with live typing, and is not offered
   at all** (the dropdown and the typed-combination box both reject it): with
@@ -186,7 +200,13 @@ Transcription always uses **every CPU core** (ctranslate2's thread count is set 
 recording** is expected: capture is I/O-bound, the cores get used during the
 transcription step. The **Use GPU (CUDA)** tray-menu toggle switches the engine to
 CUDA (`int8_float16`) when the ctranslate2 build has CUDA; without a GPU it falls
-back to CPU and says so.
+back to CPU and says so. **On Windows a GPU silently does nothing until the CUDA
+torch wheel is installed**: plain `pip` gives the CPU-only torch build (`x.y+cpu`,
+`torch.cuda.is_available()` is False even with an RTX in the machine), so the
+HF engines never engage the GPU though the settings say so. The fix is in
+`requirements-optional.txt`'s note: `pip install torch torchaudio
+--index-url https://download.pytorch.org/whl/cu128`. The faster-whisper/
+ctranslate2 wheels already speak CUDA.
 
 A separate **Models** page lives at `http://127.0.0.1:47111/models.html`: it lists every
 model (Whisper sizes, Canary, Parakeet presets, **plus every other Canary model NVIDIA

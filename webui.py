@@ -174,11 +174,12 @@ def detect_key(timeout):
 # Model / engine tables (shared with app.py for validation + model manager)
 # ---------------------------------------------------------------------------
 
-ENGINE_ORDER = ["whisper", "canary", "parakeet", "custom"]
+ENGINE_ORDER = ["whisper", "canary", "parakeet", "vosk", "custom"]
 ENGINE_LABELS = {
     "whisper": "OpenAI Whisper (faster-whisper) - fast on CPU",
     "canary": "NVIDIA Canary - multilingual",
     "parakeet": "NVIDIA Parakeet - very accurate English ASR",
+    "vosk": "Vosk - TRUE streaming: types word-by-word as you speak (CPU, less accurate, no punctuation)",
     "custom": "Custom model - any Hugging Face ASR model ID",
 }
 
@@ -202,6 +203,16 @@ PARAKEET_MODELS = [
     ("nvidia/parakeet-tdt-0.6b-v3", "Parakeet TDT 0.6B v3 - 25 languages"),
     ("nvidia/parakeet-ctc-1.1b", "Parakeet CTC 1.1B - English"),
     ("nvidia/parakeet-rnnt-1.1b", "Parakeet RNNT 1.1B - English"),
+]
+
+# Vosk is a Kaldi-based ONLINE (streaming) recognizer - with it, live typing
+# is word-level real-time (words are emitted as you speak), unlike the
+# re-listen design the offline engines use. Kaldi models come from
+# alphacephei.com (NOT Hugging Face); the app downloads the model zip into
+# ~/.cache/vosk on first use.
+VOSK_MODELS = [
+    ("vosk-model-small-en-us-0.15", "Small English (40 MB) - quick, basic accuracy"),
+    ("vosk-model-en-us-0.22", "Full English (1.8 GB) - noticeably better accuracy"),
 ]
 
 # Models shown on the Models page for completeness but NOT offered in the
@@ -320,6 +331,10 @@ def _norm_cfg(raw):
         engine_presets.setdefault(cfg["engine"], [config_mod.DEFAULTS["hf_model"]])
         hf = engine_presets[cfg["engine"]][0]
     cfg["hf_model"] = hf
+    # the Vosk engine's model is a Kaldi name from alphacephei.com, kept
+    # separate from hf_model (which only ever names HF repos)
+    if cfg.get("vosk_model") not in [r for r, _l in VOSK_MODELS]:
+        cfg["vosk_model"] = config_mod.DEFAULTS["vosk_model"]
     if cfg.get("output_mode") not in ("autotype", "clipboard"):
         cfg["output_mode"] = "autotype"
     # Live typing is stored as a plain bool; the page's switch maps onto it.
@@ -519,6 +534,7 @@ function fillModel() {
   if (st.engine === 'whisper') selectField(modelBlock, 'Whisper model size:', 'whisper_model', D.whisper_sizes, null);
   else if (st.engine === 'canary') selectField(modelBlock, 'Canary preset:', 'hf_model', D.canary, null);
   else if (st.engine === 'parakeet') selectField(modelBlock, 'Parakeet preset:', 'hf_model', D.parakeet, null);
+  else if (st.engine === 'vosk') selectField(modelBlock, 'Vosk model:', 'vosk_model', D.vosk, null);
   else {
     var row = document.createElement('div'); row.className = 'row';
     var lab = document.createElement('span'); lab.className = 'lbl'; lab.textContent = 'Custom model ID:';
@@ -547,6 +563,7 @@ function gather() {
   var c = {};
   c.trigger_key = st.trigger_key; c.output_mode = st.output_mode; c.engine = st.engine;
   c.whisper_model = st.whisper_model; c.hf_model = st.hf_model;
+  c.vosk_model = st.vosk_model;
   if (st.engine === 'custom' && customEl && customEl.value.trim()) c.hf_model = customEl.value.trim();
   c.language = st.language || null;
   c.input_device = String(st.input_device === null || st.input_device === undefined ? '' : st.input_device);
@@ -875,6 +892,7 @@ def _page_data():
         "whisper_sizes": [[s, WHISPER_SIZE_LABELS[s]] for s in WHISPER_SIZES],
         "canary": [[m, label] for m, label in CANARY_MODELS],
         "parakeet": [[m, label] for m, label in PARAKEET_MODELS],
+        "vosk": [[m, label] for m, label in VOSK_MODELS],
         "languages": [[c, label] for c, label in LANGUAGES],
         "outputs": [[m, label] for m, label in OUTPUT_MODES],
         "live_mode": [["off", "Off - type after you release"],

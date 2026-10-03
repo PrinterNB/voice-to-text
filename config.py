@@ -20,6 +20,9 @@ DEFAULTS = {
     # Live typing: type recognized words while still holding the key (works
     # with every engine; only stays in sync with fast models). Off by default.
     "live_mode": False,
+    # Vosk engine (true streaming ASR): Kaldi model name, downloaded from
+    # alphacephei.com into ~/.cache/vosk on first use.
+    "vosk_model": "vosk-model-small-en-us-0.15",
 }
 
 

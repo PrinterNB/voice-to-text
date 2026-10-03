@@ -5,3 +5,15 @@ torchaudio
 # transformers feature extraction for the Canary/Parakeet models needs librosa
 librosa
 
+# GPU note (Windows): plain pip installs the CPU torch wheel (it prints
+# "x.y+cpu" and torch.cuda.is_available() is False even with an RTX GPU
+# present) - so "compute device: GPU" silently never engaged. Install a CUDA
+# build instead (same import names; the app's GPU paths then work, and live
+# passes on an RTX 50xx run ~10x faster):
+#   pip uninstall -y torch torchaudio
+#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu128
+# faster-whisper/ctranslate2 wheels already speak CUDA; no change needed.
+
+# Vosk: the true-streaming (Kaldi) engine - CPU, models come from
+# alphacephei.com into ~/.cache/vosk on first use, not from HF
+vosk
