@@ -121,7 +121,7 @@ def _ffmpeg_chunk(name, seconds):
 
 
 def _dshow_key_held(name, is_key_held, timeout, chunk=0.5, on_start=None, idle_wait=5.0,
-                    release_grace=0.5, on_chunk=None):
+                    release_grace=0.8, on_chunk=None):
     """Capture continuously and keep only the audio while the key is held.
 
     The stream runs whether or not the key is down, so it is already rolling
@@ -339,12 +339,15 @@ def record_fixed(seconds, samplerate=SAMPLERATE, device=None):
 
 
 def record_key_held(is_key_held, timeout=600, device=None, on_start=None, idle_wait=5.0,
-                    release_grace=0.5, on_chunk=None, stream_chunk=None):
+                    release_grace=0.8, on_chunk=None, stream_chunk=None):
     """Capture continuously; keep audio only while `is_key_held()` is true.
 
     Capture runs ahead of the press, so listening begins the moment the key
     goes down, and runs `release_grace` seconds past the release, so the words
-    of letting go survive. `idle_wait` bounds the wait for a press: when nothing
+    of letting go survive: 0.8 s, not less - a TDT/CTC model needs audio AFTER
+    a word (silence at least) before it will emit that word, and the last
+    word is often finished at the very moment of release: a shorter grace
+    tail dropped it from the flush ("lost the last word"). `idle_wait` bounds the wait for a press: when nothing
     was ever held we return quickly so callers can re-read their config (a
     trigger key changed on the settings page applies within idle_wait). `on_start`
     is called once when the key first registers; `on_chunk(float32 chunk)` gets
